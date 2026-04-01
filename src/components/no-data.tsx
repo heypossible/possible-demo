@@ -26,7 +26,11 @@ const NoData = ({ session }: { session: Session | null }) => {
                 </CardDescription>
               </CardHeader>
               <CardContent className="text-center">
-                <p>Please contact David if you think this is a mistake.</p>
+                <p>Please contact Jackie at{" "}
+                  <a href="mailto:jackie@heypossible.com" className="text-blue-600 underline">
+                    jackie@heypossible.com
+                  </a>{" "}
+                  so she can investigate.</p>
               </CardContent>
             </Card>
           </div>
