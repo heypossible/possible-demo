@@ -37,11 +37,41 @@ const getSheets = () => {
   });
 };
 
-async function getFiresideData(name: string) {
+/**
+ * Collect all configured sheet IDs from env vars.
+ * Supports GOOGLE_SHEETS_SHEET_ID (legacy/default) and
+ * GOOGLE_SHEETS_SHEET_ID_19, GOOGLE_SHEETS_SHEET_ID_20, etc.
+ * Returns newest cohort first so recent students are found faster.
+ */
+function getAllSheetIds(): string[] {
+  const ids: { num: number; id: string }[] = [];
+
+  // Numbered per-cohort sheets (GOOGLE_SHEETS_SHEET_ID_19, etc.)
+  for (const [key, value] of Object.entries(process.env)) {
+    const match = key.match(/^GOOGLE_SHEETS_SHEET_ID_(\d+)$/);
+    if (match && value) ids.push({ num: parseInt(match[1]), id: value });
+  }
+
+  // Sort newest cohort first
+  ids.sort((a, b) => b.num - a.num);
+
+  // Default/legacy sheet last (fallback)
+  const defaultId = process.env.GOOGLE_SHEETS_SHEET_ID;
+  if (defaultId) {
+    // Avoid duplicates if default is also listed as a numbered var
+    if (!ids.some((e) => e.id === defaultId)) {
+      ids.push({ num: 0, id: defaultId });
+    }
+  }
+
+  return ids.map((e) => e.id);
+}
+
+async function getFiresideData(name: string, sheetId: string) {
   try {
     const sheets = getSheets();
     const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: process.env.GOOGLE_SHEETS_SHEET_ID,
+      spreadsheetId: sheetId,
       range: "'Fireside Chats'!A:ZZ",
     });
 
@@ -88,11 +118,11 @@ async function getFiresideData(name: string) {
   }
 }
 
-async function getProjectData(name: string) {
+async function getProjectData(name: string, sheetId: string) {
   try {
     const sheets = getSheets();
     const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: process.env.GOOGLE_SHEETS_SHEET_ID,
+      spreadsheetId: sheetId,
       range: "'Project'!A:ZZ",
     });
 
@@ -115,97 +145,116 @@ async function getProjectData(name: string) {
 export async function getStudentData(
   email: string,
 ): Promise<StudentData | null> {
-  try {
-    const sheets = getSheets();
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: process.env.GOOGLE_SHEETS_SHEET_ID,
-      range: "'Events'!A:ZZ",
-    });
-
-    const rows = response.data.values;
-    if (!rows) return null;
-
-    const studentRow = rows.find((row) => row[1] === email);
-    if (!studentRow) return null;
-
-    const weekDays = rows[0].slice(10);
-    const sessionNames = rows[1].slice(10);
-    const speakers = rows[2].slice(10);
-    let weekNumber = 0;
-
-    const sessions = sessionNames.map((name, index) => {
-      const weekDay = weekDays[index] || "";
-      const weekMatch = weekDay.match(/Wk (\d+)/);
-      const week = weekMatch ? parseInt(weekMatch[1]) : 0;
-      weekNumber = week || weekNumber;
-      const dayMatch = weekDay.match(
-        /(Monday|Tuesday|Wednesday|Thursday|Friday)/,
-      );
-      const day = dayMatch ? dayMatch[1] : "";
-
-      return {
-        name: name,
-        speaker: speakers[index],
-        week: weekNumber,
-        day: day,
-        status: studentRow[index + 10] || "",
-        isFireside: false,
-      };
-    });
-
-    const firesideData = await getFiresideData(studentRow[0]);
-
-    const allStatuses = [
-      ...studentRow.slice(10),
-      ...firesideData.map((session) => session!.status),
-    ];
-
-    const stats = {
-      present: allStatuses.filter((val) => val === "P").length,
-      reflection: allStatuses.filter((val) => val === "R").length,
-      late: allStatuses.filter((val) => val === "L").length,
-      absent: allStatuses.filter((val) => val === "A").length,
-      presentPercentage: parseFloat(studentRow[3]),
-    };
-
-    const allSessions = [...sessions, ...firesideData].sort((a, b) => {
-      if (!a || !b) return 0;
-      if (a.week !== b.week) return a.week - b.week;
-
-      const getDayOrder = (day: string) => {
-        switch (day) {
-          case "Monday":
-            return 1;
-          case "Tuesday":
-            return 2;
-          case "Wednesday":
-            return 3;
-          case "Thursday":
-            return 4;
-          case "Friday":
-            return 5;
-          default:
-            return 0;
-        }
-      };
-
-      return getDayOrder(a.day) - getDayOrder(b.day);
-    });
-
-    const project = await getProjectData(studentRow[0]);
-
-    return {
-      name: studentRow[0],
-      email: studentRow[1],
-      school: studentRow[2],
-      attendance: parseFloat(studentRow[3]),
-      stats,
-      sessions: allSessions as SessionData[],
-      project,
-      recordingUrl: rows[2]?.[0] || "#",
-    };
-  } catch (error) {
-    console.error("Error fetching student data:", error);
+  const sheetIds = getAllSheetIds();
+  if (sheetIds.length === 0) {
+    console.error("No sheet IDs configured. Set GOOGLE_SHEETS_SHEET_ID or GOOGLE_SHEETS_SHEET_ID_<N>.");
     return null;
   }
+
+  // Search each configured sheet for the student's email
+  for (const sheetId of sheetIds) {
+    try {
+      const result = await getStudentDataFromSheet(email, sheetId);
+      if (result) return result;
+    } catch (error) {
+      console.warn(`[sheets] Failed to read sheet ${sheetId}:`, error);
+      // Continue to next sheet
+    }
+  }
+
+  return null;
+}
+
+async function getStudentDataFromSheet(
+  email: string,
+  sheetId: string,
+): Promise<StudentData | null> {
+  const sheets = getSheets();
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId: sheetId,
+    range: "'Events'!A:ZZ",
+  });
+
+  const rows = response.data.values;
+  if (!rows) return null;
+
+  const studentRow = rows.find((row) => row[1] === email);
+  if (!studentRow) return null;
+
+  const weekDays = rows[0].slice(10);
+  const sessionNames = rows[1].slice(10);
+  const speakers = rows[2].slice(10);
+  let weekNumber = 0;
+
+  const sessions = sessionNames.map((name, index) => {
+    const weekDay = weekDays[index] || "";
+    const weekMatch = weekDay.match(/Wk (\d+)/);
+    const week = weekMatch ? parseInt(weekMatch[1]) : 0;
+    weekNumber = week || weekNumber;
+    const dayMatch = weekDay.match(
+      /(Monday|Tuesday|Wednesday|Thursday|Friday)/,
+    );
+    const day = dayMatch ? dayMatch[1] : "";
+
+    return {
+      name: name,
+      speaker: speakers[index],
+      week: weekNumber,
+      day: day,
+      status: studentRow[index + 10] || "",
+      isFireside: false,
+    };
+  });
+
+  const firesideData = await getFiresideData(studentRow[0], sheetId);
+
+  const allStatuses = [
+    ...studentRow.slice(10),
+    ...firesideData.map((session) => session!.status),
+  ];
+
+  const stats = {
+    present: allStatuses.filter((val) => val === "P").length,
+    reflection: allStatuses.filter((val) => val === "R").length,
+    late: allStatuses.filter((val) => val === "L").length,
+    absent: allStatuses.filter((val) => val === "A").length,
+    presentPercentage: parseFloat(studentRow[3]),
+  };
+
+  const allSessions = [...sessions, ...firesideData].sort((a, b) => {
+    if (!a || !b) return 0;
+    if (a.week !== b.week) return a.week - b.week;
+
+    const getDayOrder = (day: string) => {
+      switch (day) {
+        case "Monday":
+          return 1;
+        case "Tuesday":
+          return 2;
+        case "Wednesday":
+          return 3;
+        case "Thursday":
+          return 4;
+        case "Friday":
+          return 5;
+        default:
+          return 0;
+      }
+    };
+
+    return getDayOrder(a.day) - getDayOrder(b.day);
+  });
+
+  const project = await getProjectData(studentRow[0], sheetId);
+
+  return {
+    name: studentRow[0],
+    email: studentRow[1],
+    school: studentRow[2],
+    attendance: parseFloat(studentRow[3]),
+    stats,
+    sessions: allSessions as SessionData[],
+    project,
+    recordingUrl: rows[2]?.[0] || "#",
+  };
 }
