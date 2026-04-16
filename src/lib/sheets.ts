@@ -216,7 +216,7 @@ async function getStudentDataFromSheet(
   const stats = {
     present: allStatuses.filter((val) => val === "P").length,
     reflection: allStatuses.filter((val) => val === "R").length,
-    late: allStatuses.filter((val) => val === "L").length,
+    late: allStatuses.filter((val) => val === "L" || val === "L1" || val === "L2").length,
     absent: allStatuses.filter((val) => val === "A").length,
     presentPercentage: parseFloat(studentRow[3]),
   };
