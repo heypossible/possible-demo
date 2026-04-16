@@ -201,7 +201,7 @@ async function getStudentDataFromSheet(
       speaker: speakers[index],
       week: weekNumber,
       day: day,
-      status: studentRow[index + 10] || "",
+      status: (studentRow[index + 10] || "").replace(/^L[12]$/, "L"),
       isFireside: false,
     };
   });
