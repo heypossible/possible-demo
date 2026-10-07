@@ -226,7 +226,11 @@ async function getStudentDataFromSheet(
     if (a.week !== b.week) return a.week - b.week;
 
     const getDayOrder = (day: string) => {
-      switch (day) {
+      // An "(Extra)" fireside is the student's second one that week, so it
+      // sorts right after the Tuesday fireside, whatever day label it carries.
+      if (/extra/i.test(day)) return 2.5;
+      const weekday = day.match(/Monday|Tuesday|Wednesday|Thursday|Friday/)?.[0];
+      switch (weekday) {
         case "Monday":
           return 1;
         case "Tuesday":
