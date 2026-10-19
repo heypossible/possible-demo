@@ -178,7 +178,10 @@ async function getStudentDataFromSheet(
   const rows = response.data.values;
   if (!rows) return null;
 
-  const studentRow = rows.find((row) => row[1] === email);
+  const target = email.trim().toLowerCase();
+  const studentRow = rows.find(
+    (row) => row[1]?.trim().toLowerCase() === target,
+  );
   if (!studentRow) return null;
 
   const weekDays = rows[0].slice(10);
